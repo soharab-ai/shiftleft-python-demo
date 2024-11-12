@@ -1,4 +1,4 @@
-# flask-webgoat-test-github-app
+# flask-webgoat-test-github
 
 flask-webgoat is a deliberately-vulnerable application written with the Flask
 web framework.
