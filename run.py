@@ -4,11 +4,14 @@ app = create_app()
 
 @app.after_request
 def add_csp_headers(response):
-    # vulnerability: Broken Access Control
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    # vulnerability: Security Misconfiguration
-    response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-inline'"
+    # Removed broken access control by not setting the wildcard
+    # Removed security misconfiguration by not allowing inline scripts
+    response.headers['Content-Security-Policy'] = "script-src 'self'"
     return response
+
+
 
 if __name__ == '__main__':
     app.run()
+
+

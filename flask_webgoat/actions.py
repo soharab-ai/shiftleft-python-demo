@@ -60,3 +60,7 @@ def deserialized_descr():
     # vulnerability: Insecure Deserialization
     deserialized = pickle.loads(data)
     return jsonify({"success": True, "description": str(deserialized)})
+
+
+
+
