@@ -2,7 +2,6 @@ import pickle
 import base64
 from pathlib import Path
 import subprocess
-import shlex
 
 from flask import Blueprint, request, jsonify, session
 
@@ -34,8 +33,7 @@ def log_entry():
     path = Path(user_dir + "/" + filename)
     with path.open("w", encoding="utf-8") as open_file:
         # vulnerability: Directory Traversal
-        # Fixed: Escaping the filename to prevent directory traversal
-        open_file.write(shlex.quote(text_param))
+        open_file.write(text_param)
     return jsonify({"success": True})
 
 
@@ -43,10 +41,9 @@ def log_entry():
 def grep_processes():
     name = request.args.get("name")
     # vulnerability: Remote Code Execution
-    # Fixed: Escaping the name to prevent command injection
     res = subprocess.run(
-        shlex.split(f"ps aux | grep {shlex.quote(name)} | awk '{{print $11}}'"),
-        shell=False,
+        ["ps aux | grep " + name + " | awk '{print $11}'"],
+        shell=True,
         capture_output=True,
     )
     if res.stdout is None:
@@ -61,8 +58,9 @@ def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
     # vulnerability: Insecure Deserialization
-    # Fixed: Deserialization should be done with a safe method like pickle.loads(data)
     deserialized = pickle.loads(data)
     return jsonify({"success": True, "description": str(deserialized)})
+
+
 
 
