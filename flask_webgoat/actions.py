@@ -23,10 +23,6 @@ def log_entry():
     if text_param is None:
         return jsonify({"error": "text parameter is required"})
 
-    # Validate or escape input to prevent command injection
-    filename_param = re.sub(r";|\|", "", filename_param)
-    text_param = re.sub(r";|\|", "", text_param)
-
     user_id = user_info[0]
     user_dir = "data/" + str(user_id)
     user_dir_path = Path(user_dir)
@@ -36,9 +32,9 @@ def log_entry():
     filename = filename_param + ".txt"
     path = Path(user_dir + "/" + filename)
     with path.open("w", encoding="utf-8") as open_file:
+        # vulnerability: Directory Traversal
         open_file.write(text_param)
     return jsonify({"success": True})
-
 
 
 @bp.route("/grep_processes")
@@ -64,4 +60,7 @@ def deserialized_descr():
     # vulnerability: Insecure Deserialization
     deserialized = pickle.loads(data)
     return jsonify({"success": True, "description": str(deserialized)})
+
+
+
 
