@@ -5,12 +5,14 @@ app = create_app()
 @app.after_request
 def add_csp_headers(response):
     # vulnerability: Broken Access Control
-    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Origin'] = 'null'
     # vulnerability: Security Misconfiguration
     response.headers['Content-Security-Policy'] = "script-src 'self'"
     return response
 
 
+
 if __name__ == '__main__':
     app.run()
+
 
