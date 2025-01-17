@@ -16,6 +16,7 @@ def query_db(query, args=(), one=False, commit=False):
 
 
 
+
 def create_app():
     app = Flask(__name__)
     app.secret_key = "aeZ1iwoh2ree2mo0Eereireong4baitixaixu5Ee"
