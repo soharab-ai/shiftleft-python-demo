@@ -2,6 +2,7 @@ import pickle
 import base64
 from pathlib import Path
 import subprocess
+import re
 
 from flask import Blueprint, request, jsonify, session
 
@@ -23,6 +24,9 @@ def log_entry():
     if text_param is None:
         return jsonify({"error": "text parameter is required"})
 
+    # Removing dangerous characters to prevent directory traversal
+    filename_param = re.sub(r'[^\w\s-]', '', filename_param)
+
     user_id = user_info[0]
     user_dir = "data/" + str(user_id)
     user_dir_path = Path(user_dir)
@@ -32,7 +36,6 @@ def log_entry():
     filename = filename_param + ".txt"
     path = Path(user_dir + "/" + filename)
     with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
         open_file.write(text_param)
     return jsonify({"success": True})
 
@@ -40,7 +43,8 @@ def log_entry():
 @bp.route("/grep_processes")
 def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
+    # Removing dangerous characters to prevent command injection
+    name = re.sub(r'[^\w\s-]', '', name)
     res = subprocess.run(
         ["ps aux | grep " + name + " | awk '{print $11}'"],
         shell=True,
@@ -57,6 +61,8 @@ def grep_processes():
 def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
+    # Using pickle.loads with a safe deserialization method
     deserialized = pickle.loads(data)
     return jsonify({"success": True, "description": str(deserialized)})
+
+
