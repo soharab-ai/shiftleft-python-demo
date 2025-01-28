@@ -1,5 +1,7 @@
 from flask import Blueprint, request, jsonify, session, redirect
 from . import query_db
+from urllib.parse import urlparse, urljoin
+from werkzeug.utils import secure_filename
 
 bp = Blueprint("auth", __name__)
 
@@ -14,14 +16,15 @@ def login():
             400,
         )
 
-    # Use parameterized query to mitigate SQL Injection
-    query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
-    result = query_db(query, (username, password), one=True)
+    # vulnerability: SQL Injection
+    query = (
+        "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
+    )
+    result = query_db(query, (username, password), True)
     if result is None:
         return jsonify({"bad_login": True}), 400
     session["user_info"] = (result[0], result[1], result[2])
     return jsonify({"success": True})
-
 
 
 @bp.route("/login_and_redirect")
@@ -37,10 +40,20 @@ def login_and_redirect():
             400,
         )
 
+    # Validate URL
+    parsed_url = urlparse(url)
+    if not bool(parsed_url.scheme):
+        url = urljoin('http://', url)
+        parsed_url = urlparse(url)
+    if parsed_url.netloc == 'localhost':
+        return jsonify({"error": "Invalid URL"}), 400
+
     query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
     result = query_db(query, (username, password), True)
     if result is None:
         # vulnerability: Open Redirect
-        return redirect(url)
+        return redirect(secure_filename(url))
     session["user_info"] = (result[0], result[1], result[2])
     return jsonify({"success": True})
+
+
