@@ -9,11 +9,12 @@ DB_FILENAME = "database.db"
 
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        cur = conn.cursor()
-        cur.execute(query, args) 
+        logger = logging.getLogger('sqlalchemy')
+        cur = conn.cursor().execute(query, args)
         if commit:
-            conn.commit() 
-        return cur.fetchone() if one else cur.fetchall() 
+            conn.commit()
+        return cur.fetchone() if one else cur.fetchall()
+
 
 
 
