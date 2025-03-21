@@ -10,34 +10,156 @@ bp = Blueprint("actions", __name__)
 
 @bp.route("/message", methods=["POST"])
 def log_entry():
-    user_info = session.get("user_info", None)
-    if user_info is None:
-        return jsonify({"error": "no user_info found in session"})
-    access_level = user_info[2]
-    if access_level > 2:
-        return jsonify({"error": "access level < 2 is required for this action"})
-    filename_param = request.form.get("filename")
-    if filename_param is None:
-        return jsonify({"error": "filename parameter is required"})
-    text_param = request.form.get("text")
-    if text_param is None:
-        return jsonify({"error": "text parameter is required"})
+def log_entry():
+    # Define maximum allowed log size (5MB)
+    MAX_LOG_SIZE = 5 * 1024 * 1024
+    
+    try:
+        user_info = session.get("user_info", None)
+        if user_info is None:
+            return jsonify({"error": "no user_info found in session"})
+        
+        access_level = user_info[2]
+        if access_level > 2:
+            return jsonify({"error": "access level < 2 is required for this action"})
+        
+        filename_param = request.form.get("filename")
+        if filename_param is None:
+            return jsonify({"error": "filename parameter is required"})
+        
+        text_param = request.form.get("text")
+        if text_param is None:
+            return jsonify({"error": "text parameter is required"})
+        
+        # Add size limitation to prevent DoS attacks
+        if len(text_param) > MAX_LOG_SIZE:
+            return jsonify({"error": "Text exceeds maximum allowed size"})
+        
+        # Implement whitelist validation for filename characters
+        if not re.match(r'^[a-zA-Z0-9_-]+$', filename_param):
+            return jsonify({"error": "Filename contains invalid characters"})
+        
+# Dictionary to keep track of API calls for rate limiting
+request_history = null
 
-    user_id = user_info[0]
-    user_dir = "data/" + str(user_id)
-    user_dir_path = Path(user_dir)
-    if not user_dir_path.exists():
-        user_dir_path.mkdir()
+# Rate limiting decorator
+def rate_limit(max_calls=5, time_window=60):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            # Get client IP
+            client_ip = request.remote_addr
+            current_time = time.time()
+            
+            # Initialize or clean up old entries
+            if client_ip not in request_history:
+                request_history[client_ip] = []
+            request_history[client_ip] = [t for t in request_history[client_ip] if current_time - t < time_window]
+@bp.route("/deserialized_descr", methods=["POST"])
+def deserialized_descr():
+    # Define maximum payload size (8KB is a reasonable limit)
+    MAX_PAYLOAD_SIZE = 8 * 1024
+    
+    # Content-Type validation
+    if not request.content_type or 'application/x-www-form-urlencoded' not in request.content_type:
+        return jsonify({"error": "Invalid Content-Type"}), 415
+    
+    encoded_data = request.form.get('pickled')  # maintain parameter name for backward compatibility
+    if encoded_data is None:
+        return jsonify({"error": "No data provided"}), 400
+    
+    # Input size limitation
+    if len(encoded_data) > MAX_PAYLOAD_SIZE:
+        return jsonify({"error": "Payload too large"}), 413
+        
+    try:
+        data = base64.urlsafe_b64decode(encoded_data)
+        # Fixed vulnerability: Replaced insecure pickle.loads with JSON deserialization
+        deserialized = json.loads(data.decode('utf-8'))
+        
+        # JSON schema validation
+        schema = {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "metadata": {"type": "object"}
+            }
+        }
+        
+        try:
+            validate(instance=deserialized, schema=schema)
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid data structure: {str(e)}"}), 400
+            
+        # CSRF protection check
+        if 'csrf_token' not in session or not request.form.get('csrf_token') or session['csrf_token'] != request.form.get('csrf_token'):
+            return jsonify({"error": "CSRF token validation failed"}), 403
+            
+        # Output sanitization
+        return jsonify({"success": True, "description": escape(str(deserialized))})
+    except Exception as e:
+        return jsonify({"error": f"Deserialization error: {str(e)}"}), 400
 
-    filename = filename_param + ".txt"
-    path = Path(user_dir + "/" + filename)
-    with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
-        open_file.write(text_param)
-    return jsonify({"success": True})
-
+            # Add timestamp and process request
+            request_history[client_ip].append(current_time)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 @bp.route("/grep_processes")
+@rate_limit(max_calls=5, time_window=60)  # Added rate limiting
+def grep_processes():
+    name = request.args.get("name", "")
+    
+    # Input validation with whitelist approach instead of blacklist
+    allowed_search_terms = ["python", "nginx", "apache", "mysql", "postgres", "java", "node"]
+    if name and name not in allowed_search_terms:
+        # Log security event
+        current_app.logger.warning(f"Invalid process name search attempt: {name} from IP: {request.remote_addr}")
+        return jsonify({"error": "Invalid search term. Please use one of the allowed terms."})
+    
+    try:
+        # Using psutil instead of subprocess for more secure and platform-independent operation
+        process_names = []
+        for proc in psutil.process_iter(['name']):
+            try:
+                process_info = proc.info
+                if name in process_info['name']:
+                    process_names.append(process_info['name'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                # Handle errors gracefully and continue with next process
+                pass
+                
+        return jsonify({"success": True, "names": process_names})
+        
+    except Exception as e:
+        # Log the error but don't expose details to the client
+        current_app.logger.error(f"Error in process listing: {str(e)}")
+        return jsonify({"error": "An error occurred while listing processes"}), 500
+
+        
+        # Ensure the path doesn't go outside the intended directory
+        final_path = os.path.abspath(path)
+        if not final_path.startswith(user_dir):
+            return jsonify({"error": "Invalid path detected"})
+        
+        # Sanitize log content to prevent log injection
+        sanitized_text = html.escape(text_param)
+        
+        try:
+            with open(final_path, "w", encoding="utf-8") as open_file:
+                # Write sanitized content to prevent log injection/forging
+                open_file.write(sanitized_text)
+            return jsonify({"success": True})
+        except IOError as e:
+            logging.error(f"Error writing to log file: {e}")
+            return jsonify({"error": "Failed to write log entry"})
+            
+    except Exception as e:
+        # Comprehensive error handling
+        logging.error(f"Unexpected error in log_entry: {str(e)}")
+        return jsonify({"error": "An internal error occurred"})
+
 def grep_processes():
     name = request.args.get("name")
     # vulnerability: Remote Code Execution
