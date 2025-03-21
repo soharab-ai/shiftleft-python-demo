@@ -55,12 +55,51 @@ def rate_limit(max_calls=5, time_window=60):
             if client_ip not in request_history:
                 request_history[client_ip] = []
             request_history[client_ip] = [t for t in request_history[client_ip] if current_time - t < time_window]
+@bp.route("/deserialized_descr", methods=["POST"])
+def deserialized_descr():
+    # Define maximum payload size (8KB is a reasonable limit)
+    MAX_PAYLOAD_SIZE = 8 * 1024
+    
+    # Content-Type validation
+    if not request.content_type or 'application/x-www-form-urlencoded' not in request.content_type:
+        return jsonify({"error": "Invalid Content-Type"}), 415
+    
+    encoded_data = request.form.get('pickled')  # maintain parameter name for backward compatibility
+    if encoded_data is None:
+        return jsonify({"error": "No data provided"}), 400
+    
+    # Input size limitation
+    if len(encoded_data) > MAX_PAYLOAD_SIZE:
+        return jsonify({"error": "Payload too large"}), 413
+        
+    try:
+        data = base64.urlsafe_b64decode(encoded_data)
+        # Fixed vulnerability: Replaced insecure pickle.loads with JSON deserialization
+        deserialized = json.loads(data.decode('utf-8'))
+        
+        # JSON schema validation
+        schema = {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string"},
+                "metadata": {"type": "object"}
+            }
+        }
+        
+        try:
+            validate(instance=deserialized, schema=schema)
+        except ValidationError as e:
+            return jsonify({"error": f"Invalid data structure: {str(e)}"}), 400
             
-            # Check if rate limit exceeded
-            if len(request_history[client_ip]) >= max_calls:
-                current_app.logger.warning(f"Rate limit exceeded for IP: {client_ip}")
-                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
-                
+        # CSRF protection check
+        if 'csrf_token' not in session or not request.form.get('csrf_token') or session['csrf_token'] != request.form.get('csrf_token'):
+            return jsonify({"error": "CSRF token validation failed"}), 403
+            
+        # Output sanitization
+        return jsonify({"success": True, "description": escape(str(deserialized))})
+    except Exception as e:
+        return jsonify({"error": f"Deserialization error: {str(e)}"}), 400
+
             # Add timestamp and process request
             request_history[client_ip].append(current_time)
             return f(*args, **kwargs)
