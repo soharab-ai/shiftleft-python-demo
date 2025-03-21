@@ -39,21 +39,65 @@ def log_entry():
         if not re.match(r'^[a-zA-Z0-9_-]+$', filename_param):
             return jsonify({"error": "Filename contains invalid characters"})
         
-        user_id = user_info[0]
-        user_dir = os.path.abspath(f"data/{str(user_id)}")
+# Dictionary to keep track of API calls for rate limiting
+request_history = null
+
+# Rate limiting decorator
+def rate_limit(max_calls=5, time_window=60):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            # Get client IP
+            client_ip = request.remote_addr
+            current_time = time.time()
+            
+            # Initialize or clean up old entries
+            if client_ip not in request_history:
+                request_history[client_ip] = []
+            request_history[client_ip] = [t for t in request_history[client_ip] if current_time - t < time_window]
+            
+            # Check if rate limit exceeded
+            if len(request_history[client_ip]) >= max_calls:
+                current_app.logger.warning(f"Rate limit exceeded for IP: {client_ip}")
+                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+                
+            # Add timestamp and process request
+            request_history[client_ip].append(current_time)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@bp.route("/grep_processes")
+@rate_limit(max_calls=5, time_window=60)  # Added rate limiting
+def grep_processes():
+    name = request.args.get("name", "")
+    
+    # Input validation with whitelist approach instead of blacklist
+    allowed_search_terms = ["python", "nginx", "apache", "mysql", "postgres", "java", "node"]
+    if name and name not in allowed_search_terms:
+        # Log security event
+        current_app.logger.warning(f"Invalid process name search attempt: {name} from IP: {request.remote_addr}")
+        return jsonify({"error": "Invalid search term. Please use one of the allowed terms."})
+    
+    try:
+        # Using psutil instead of subprocess for more secure and platform-independent operation
+        process_names = []
+        for proc in psutil.process_iter(['name']):
+            try:
+                process_info = proc.info
+                if name in process_info['name']:
+                    process_names.append(process_info['name'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                # Handle errors gracefully and continue with next process
+                pass
+                
+        return jsonify({"success": True, "names": process_names})
         
-        # Fix race condition by using exist_ok parameter
-        try:
-            os.makedirs(user_dir, exist_ok=True)
-        except OSError:
-            logging.error(f"Failed to create directory: {user_dir}")
-            return jsonify({"error": "Could not create user directory"})
-        
-        # Sanitize the filename by using os.path.basename to strip any path components
-        filename = os.path.basename(filename_param) + ".txt"
-        
-        # Use os.path.join for secure path construction
-        path = os.path.join(user_dir, filename)
+    except Exception as e:
+        # Log the error but don't expose details to the client
+        current_app.logger.error(f"Error in process listing: {str(e)}")
+        return jsonify({"error": "An error occurred while listing processes"}), 500
+
         
         # Ensure the path doesn't go outside the intended directory
         final_path = os.path.abspath(path)
