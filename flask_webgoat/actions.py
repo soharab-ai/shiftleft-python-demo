@@ -23,18 +23,39 @@ def log_entry():
     if text_param is None:
         return jsonify({"error": "text parameter is required"})
 
+    # MITIGATION 1: Use whitelist approach instead of blacklist filtering
+    if not re.match(r'^[a-zA-Z0-9_-]+$', filename_param):
+        return jsonify({"error": "Invalid filename - only alphanumeric characters, underscores, and hyphens allowed"})
+    
+    # MITIGATION 2: Normalize paths before validation
+    normalized_path = os.path.normpath(filename_param)
+    if normalized_path != os.path.basename(normalized_path):
+        return jsonify({"error": "Invalid filename - path traversal attempt detected"})
+
     user_id = user_info[0]
     user_dir = "data/" + str(user_id)
     user_dir_path = Path(user_dir)
     if not user_dir_path.exists():
-        user_dir_path.mkdir()
+        user_dir_path.mkdir(parents=True, exist_ok=True)
 
-    filename = filename_param + ".txt"
-    path = Path(user_dir + "/" + filename)
-    with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
+    # MITIGATION 3: Use UUID-based filename approach
+    unique_id = uuid.uuid4()
+    
+    # MITIGATION 4: Use dedicated sanitization library
+    sanitized_filename = secure_filename(filename_param)
+    safe_filename = f"{unique_id}_{sanitized_filename}.txt"
+    
+    # Use proper path joining with pathlib instead of string concatenation
+    final_path = user_dir_path.joinpath(safe_filename)
+    
+    # MITIGATION 5: Add output path validation
+    if os.path.commonpath([str(final_path.absolute()), str(user_dir_path.absolute())]) != str(user_dir_path.absolute()):
+        return jsonify({"error": "Path traversal attempt detected"})
+    
+    with final_path.open("w", encoding="utf-8") as open_file:
         open_file.write(text_param)
     return jsonify({"success": True})
+
 
 
 @bp.route("/grep_processes")
