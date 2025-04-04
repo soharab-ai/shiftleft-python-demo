@@ -10,26 +10,20 @@ bp = Blueprint("users", __name__)
 @bp.route("/create_user", methods=["POST"])
 def create_user():
 def create_user():
-    # Initialize CSRF protection
-    csrf = CSRFProtect()
-    
-    # Check for valid session
     user_info = session.get("user_info", None)
     if user_info is None:
         return jsonify({"error": "no user_info found in session"})
 
-    # Validate access level from session
     access_level = user_info[2]
     if access_level != 0:
         return jsonify({"error": "access level of 0 is required for this action"})
     
-    # Get form data
     username = request.form.get("username")
     password = request.form.get("password")
-    user_access_level = request.form.get("access_level")
+    access_level_str = request.form.get("access_level")
     
-    # Validate required fields
-    if username is None or password is None or user_access_level is None:
+    # Check if all required parameters are provided
+    if username is None or password is None or access_level_str is None:
         return (
             jsonify(
                 {
@@ -39,13 +33,40 @@ def create_user():
             400,
         )
     
-    # Enhanced input validation
+    # Validate password length
     if len(password) < 3:
         return (
             jsonify({"error": "the password needs to be at least 3 characters long"}),
             402,
         )
     
+    # Added input validation for username format
+    if not re.match(r'^[a-zA-Z0-9_]+$', username):
+        return jsonify({"error": "Username contains invalid characters"}), 400
+    
+    # Added validation for access_level
+    try:
+        access_level = int(access_level_str)
+        if access_level not in [0, 1, 2]:  # Define allowed access levels
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "Invalid access level"}), 400
+    
+    # Added password hashing for security
+    hashed_password = generate_password_hash(password)
+    
+    # Using parameterized query to prevent SQL injection
+    query = "INSERT INTO user (username, password, access_level) VALUES (?, ?, ?)"
+    params = (username, hashed_password, access_level)
+
+    try:
+        query_db(query, params, False, True)
+        return jsonify({"success": True})
+    except sqlite3.Error as err:
+        # Added comprehensive error handling to avoid information leakage
+        logging.error(f"Database error while creating user: {str(err)}")
+        return jsonify({"error": "An error occurred while creating the user"}), 500
+
     # Username format validation using regex
     if not re.match(r'^[a-zA-Z0-9_]+$', username):
         return jsonify({"error": "Invalid username format"}), 400
