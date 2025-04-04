@@ -11,33 +11,100 @@ bp = Blueprint("actions", __name__)
 @bp.route("/message", methods=["POST"])
 def log_entry():
 def log_entry():
-    # Constants for validation
-    MAX_TEXT_LENGTH = 10000
-    FILENAME_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+    # Configure logging
+    logging.basicConfig(
+        filename='application.log',
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Define constants
+    MAX_FILE_SIZE_BYTES = 1024 * 1024  # 1MB limit
     
     user_info = session.get("user_info", None)
     if user_info is None:
+        logging.warning("Attempted log_entry with no user_info in session")
         return jsonify({"error": "no user_info found in session"})
+    
     access_level = user_info[2]
     if access_level > 2:
+        logging.warning(f"User ID {user_info[0]} attempted access with insufficient privileges")
         return jsonify({"error": "access level < 2 is required for this action"})
     
     filename_param = request.form.get("filename")
     if filename_param is None:
+        logging.warning(f"User ID {user_info[0]} attempted log_entry with missing filename")
         return jsonify({"error": "filename parameter is required"})
     
     text_param = request.form.get("text")
     if text_param is None:
+        logging.warning(f"User ID {user_info[0]} attempted log_entry with missing text")
         return jsonify({"error": "text parameter is required"})
     
-    # MITIGATION 4: Content validation for text parameter
-    if len(text_param) > MAX_TEXT_LENGTH:
-        return jsonify({"error": "Text content exceeds maximum allowed length"})
+    # Check file size limit
+    if len(text_param) > MAX_FILE_SIZE_BYTES:
+        logging.warning(f"User ID {user_info[0]} attempted to write oversized content: {len(text_param)} bytes")
+        return jsonify({"error": "Text content exceeds maximum allowed size"})
     
-    # Additional content validation - check for dangerous patterns
-    if contains_dangerous_patterns(text_param):
-        return jsonify({"error": "Text content contains potentially dangerous patterns"})
+    user_id = user_info[0]
     
+    # Create a safe path using Path objects properly
+    user_dir_path = Path("data") / str(user_id)
+    if not user_dir_path.exists():
+        user_dir_path.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Created new directory for User ID {user_id}")
+    
+    # Use whitelisting approach - generate a safe filename with user ID and random token
+    # First sanitize the original filename for logging purposes
+    safe_original = secure_filename(filename_param)
+    # Then create a completely generated safe name
+    safe_filename = f"{user_id}_{secrets.token_hex(8)}.txt"
+    
+    # Properly join paths and create the file path
+    file_path = user_dir_path / safe_filename
+    
+    # Store a mapping of the generated filename to original filename for reference
+    filename_mapping_path = user_dir_path / "filename_mappings.txt"
+    with open(filename_mapping_path, "a", encoding="utf-8") as mapping_file:
+        mapping_file.write(f"{safe_filename}:{safe_original}\n")
+    
+    # Use temporary file for initial writing and virus scanning
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_path = temp_file.name
+        temp_file.write(text_param.encode('utf-8'))
+    
+    try:
+        # Perform virus scan on temp file
+        cd = clamd.ClamdUnixSocket()
+        scan_results = cd.scan(temp_path)
+        if scan_results[temp_path][0] == 'FOUND':
+            os.unlink(temp_path)  # Delete the temp file
+            logging.warning(f"User ID {user_id} attempted to upload malicious content: {scan_results[temp_path][1]}")
+            return jsonify({"error": "Potential malware detected in content"})
+        
+        # If scan is clear, move content to final location
+        with open(temp_path, 'rb') as temp_file:
+            with file_path.open("wb") as final_file:
+                final_file.write(temp_file.read())
+        
+        # Remove the temp file
+        os.unlink(temp_path)
+        
+        # Log successful file creation
+        logging.info(f"User {user_id} successfully created file {safe_filename} (original: {safe_original})")
+        
+        return jsonify({
+            "success": True,
+            "filename": safe_filename,
+            "original_filename": safe_original
+        })
+        
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)  # Clean up temp file on error
+        logging.error(f"Error in log_entry for User {user_id}: {str(e)}")
+        return jsonify({"error": f"An error occurred: {str(e)}"})
+
     user_id = user_info[0]
     
     try:
