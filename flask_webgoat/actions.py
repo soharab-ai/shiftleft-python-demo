@@ -39,21 +39,65 @@ def log_entry():
     text_param = request.form.get("text")
     if text_param is None:
         logging.warning(f"User ID {user_info[0]} attempted log_entry with missing text")
-        return jsonify({"error": "text parameter is required"})
+# Dictionary to track rate limiting
+request_tracker = null
+
+# Rate limiting decorator
+def rate_limit(max_requests=5, window=60):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            # Get client IP
+            client_ip = request.remote_addr
+            current_time = time.time()
+            
+            # Initialize or clean up old entries
+            if client_ip not in request_tracker:
+                request_tracker[client_ip] = []
+            
+            # Remove requests outside the time window
+            request_tracker[client_ip] = [t for t in request_tracker[client_ip] if current_time - t < window]
+            
+            # Check if rate limit exceeded
+            if len(request_tracker[client_ip]) >= max_requests:
+                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+            
+            # Add current request timestamp
+            request_tracker[client_ip].append(current_time)
+            
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+# Whitelist of allowed process names for strict checking
+ALLOWED_PROCESS_NAMES = {
+    "chrome", "firefox", "safari", "apache2", "nginx", 
+    "python", "node", "java", "vscode", "bash"
+}
+
+@rate_limit(max_requests=10, window=60)
+def grep_processes():
+    name = request.args.get("name")
     
-    # Check file size limit
-    if len(text_param) > MAX_FILE_SIZE_BYTES:
-        logging.warning(f"User ID {user_info[0]} attempted to write oversized content: {len(text_param)} bytes")
-        return jsonify({"error": "Text content exceeds maximum allowed size"})
+    # Input validation - ensure name exists and matches allowed pattern
+    if not name or not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        return jsonify({"error": "Invalid process name"}), 400
     
-    user_id = user_info[0]
+    # Optional: Strict whitelist checking
+    if name not in ALLOWED_PROCESS_NAMES:
+        return jsonify({"error": "Process name not in allowed list"}), 403
     
-    # Create a safe path using Path objects properly
-    user_dir_path = Path("data") / str(user_id)
-    if not user_dir_path.exists():
-        user_dir_path.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Created new directory for User ID {user_id}")
-    
+    # Using psutil instead of subprocess to eliminate shell command injection risk
+    filtered_processes = []
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            if name in proc.info['name']:
+                filtered_processes.append(proc.info['name'])
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+            
+    return jsonify({"success": True, "names": filtered_processes})
+
     # Use whitelisting approach - generate a safe filename with user ID and random token
     # First sanitize the original filename for logging purposes
     safe_original = secure_filename(filename_param)
