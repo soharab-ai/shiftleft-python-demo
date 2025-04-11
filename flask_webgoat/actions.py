@@ -55,12 +55,55 @@ def rate_limit(max_requests=5, window=60):
             if client_ip not in request_tracker:
                 request_tracker[client_ip] = []
             
-            # Remove requests outside the time window
-            request_tracker[client_ip] = [t for t in request_tracker[client_ip] if current_time - t < window]
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Define schema for expected data
+EXPECTED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "metadata": {"type": "object"}
+    },
+    "required": ["description"]
+}
+
+def validate_expected_structure(data):
+    """Validate that the data has the expected structure"""
+    try:
+        jsonschema.validate(data, EXPECTED_SCHEMA)
+        return True
+    except jsonschema.exceptions.ValidationError:
+        return False
+
+@limiter.limit("10 per minute")  # Added rate limiting to prevent DoS attacks
+def deserialized_descr():
+    # Added content type verification
+    if request.content_type != 'application/json':
+        return jsonify({"error": "Expected Content-Type: application/json"})
+    
+    # Added input validation layer
+    data_json = request.form.get('data')
+    if not data_json or not isinstance(data_json, str):
+        return jsonify({"error": "Invalid data format"})
+    
+    try:
+        # Using JSON instead of pickle for deserialization to prevent arbitrary code execution
+        deserialized = json.loads(data_json)
+        
+        # Added schema validation to ensure expected data structure
+        if not validate_expected_structure(deserialized):
+            return jsonify({"error": "Invalid data structure"})
             
-            # Check if rate limit exceeded
-            if len(request_tracker[client_ip]) >= max_requests:
-                return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
+        return jsonify({"success": True, "description": str(deserialized)})
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON data"})
+    except jsonschema.exceptions.ValidationError:
+        return jsonify({"error": "Data failed schema validation"})
+
             
             # Add current request timestamp
             request_tracker[client_ip].append(current_time)
