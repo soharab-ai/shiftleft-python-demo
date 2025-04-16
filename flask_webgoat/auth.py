@@ -156,6 +156,7 @@ def external_redirect():
     # Render a warning template that informs users they're leaving the site
     return render_template('external_redirect.html', target_url=target_url)
 
+
     # Assuming the stored password is already hashed with bcrypt
     if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
         # Track failed login attempts
