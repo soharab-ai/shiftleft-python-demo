@@ -51,6 +51,7 @@ def add_csp_headers(response, inline_scripts=None):
     
     return response
 
+
         current_app.logger.warning(f"Rejected CORS request from untrusted origin: {origin}")
         
     # Fix: Only set CORS headers for trusted origins
