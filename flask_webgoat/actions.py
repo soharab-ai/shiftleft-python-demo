@@ -39,21 +39,108 @@ def log_entry():
     text_param = request.form.get("text")
     if text_param is None:
         logging.warning(f"User ID {user_info[0]} attempted log_entry with missing text")
-# Dictionary to track rate limiting
-request_tracker = null
+# Global rate limiting cache
+_rate_limit_cache = null
+
+# Whitelist of permitted process names
+ALLOWED_PROCESS_NAMES = {
+    "python", "nginx", "apache2", "httpd", "mysql", "postgres", 
+    "mongodb", "redis", "node", "java", "tomcat", "firefox", "chrome"
+}
+
+# OS Command abstraction wrapper
+class SystemCommandExecutor:
+    @staticmethod
+    def find_processes(name, timeout=3):
+        """Safely execute process search with timeout"""
+        try:
+            # Use pgrep for process identification - more restricted approach
+            res = subprocess.run(
+                ["pgrep", "-l", name],
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            return res.stdout.splitlines()
+        except subprocess.TimeoutExpired:
+            logging.warning(f"Process search for '{name}' timed out")
+            return []
+        except Exception as e:
+            logging.error(f"Error executing process search: {str(e)}")
+            return []
 
 # Rate limiting decorator
-def rate_limit(max_requests=5, window=60):
-    def decorator(f):
-        @wraps(f)
-        def wrapped(*args, **kwargs):
-            # Get client IP
-            client_ip = request.remote_addr
+def rate_limit(max_calls, time_frame):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            client_ip = get_remote_address()
             current_time = time.time()
             
-            # Initialize or clean up old entries
-            if client_ip not in request_tracker:
-                request_tracker[client_ip] = []
+            # Clean up expired entries
+            for ip in list(_rate_limit_cache.keys()):
+                if current_time - _rate_limit_cache[ip]["timestamp"] > time_frame:
+                    del _rate_limit_cache[ip]
+            
+            if client_ip in _rate_limit_cache:
+                entry = _rate_limit_cache[client_ip]
+                if entry["count"] >= max_calls:
+                    logging.warning(f"Rate limit exceeded for IP: {client_ip}")
+                    return jsonify({"error": "Rate limit exceeded. Try again later."})
+                entry["count"] += 1
+            else:
+                _rate_limit_cache[client_ip] = {"count": 1, "timestamp": current_time}
+                
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+# Asynchronous process search
+async def async_process_search(name):
+    # Create executor for running blocking code
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(None, SystemCommandExecutor.find_processes, name, 3)
+    return results
+
+@rate_limit(max_calls=5, time_frame=60)  # Added rate limiting: 5 calls per minute
+def grep_processes():
+    name = request.args.get("name")
+    if name is None:
+        return jsonify({"error": "name parameter is required"})
+    
+    # Input validation - only allow alphanumeric characters and limited symbols
+    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        # Added security logging for rejected requests
+        logging.warning(f"Invalid process name requested: {name} from IP: {get_remote_address()}")
+        return jsonify({"error": "invalid characters in name parameter"})
+    
+    # Defense-in-depth: Whitelist approach
+    if name not in ALLOWED_PROCESS_NAMES:
+        logging.warning(f"Attempt to search non-whitelisted process: {name} from IP: {get_remote_address()}")
+        return jsonify({"error": "process name not in allowed list"})
+    
+    try:
+        # Use asynchronous processing for better performance
+        process_results = asyncio.run(async_process_search(name))
+        
+        # Process the output in Python
+        names = []
+        for line in process_results:
+            parts = line.strip().split(None, 1)
+            if len(parts) > 1:
+                pid, proc_name = parts
+                names.append(proc_name)
+        
+        # Log successful searches
+        logging.info(f"Successful process search for '{name}' returned {len(names)} results")
+        return jsonify({"success": True, "names": names})
+        
+    except Exception as e:
+        # Enhanced error handling
+        logging.error(f"Error in grep_processes: {str(e)}")
+        return jsonify({"error": f"An internal error occurred: {str(e)}"})
+
             
 # Initialize rate limiter
 limiter = Limiter(
