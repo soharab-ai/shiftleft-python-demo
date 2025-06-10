@@ -55,12 +55,91 @@ class SystemCommandExecutor:
         """Safely execute process search with timeout"""
         try:
             # Use pgrep for process identification - more restricted approach
-            res = subprocess.run(
-                ["pgrep", "-l", name],
-                shell=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+@bp.route("/deserialized_descr", methods=["POST"])
+def deserialized_descr():
+    try:
+        # Validate content type to restrict potential attacks
+        if request.content_type and not request.content_type.startswith('application/x-www-form-urlencoded'):
+            return jsonify({"success": False, "error": "Invalid content type"}), 415
+            
+        pickled = request.form.get('pickled')
+        if not pickled:
+            return jsonify({"success": False, "error": "Missing required parameter"}), 400
+            
+        # Define expected data structure using Marshmallow schema
+        class ExpectedDataSchema(Schema):
+            # Define expected structure - adjust fields based on your actual data needs
+            name = fields.String(required=True)
+            value = fields.String(required=True)
+            # Add more fields as needed
+        
+        try:
+            # Verify signature and decode data
+            decoded = verify_and_load(pickled, request.app.config['SECRET_KEY'])
+            
+            # Validate data against schema
+            schema = ExpectedDataSchema()
+            validated_data = schema.load(decoded)
+            
+            return jsonify({"success": True, "description": str(validated_data)})
+        except ValidationError as err:
+            return jsonify({"success": False, "error": f"Schema validation error: {err.messages}"}), 400
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+            
+    except base64.binascii.Error:
+        return jsonify({"success": False, "error": "Invalid base64 encoding"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Invalid data format: {str(e)}"}), 400
+
+def verify_and_load(signed_data, secret_key):
+    """
+    Verify the digital signature and load the data if valid.
+    
+    Args:
+        signed_data: Base64-encoded string containing signature and serialized data
+        secret_key: Secret key used for generating/verifying signatures
+    
+    Returns:
+        Deserialized data if signature is valid
+        
+    Raises:
+        ValueError if signature is invalid or data format is incorrect
+    """
+    try:
+        decoded = base64.urlsafe_b64decode(signed_data).decode('utf-8')
+        # Extract signature and serialized data
+        if ':' not in decoded:
+            raise ValueError("Invalid data format - signature separator not found")
+            
+        signature, serialized = decoded.split(':', 1)
+        # Verify signature
+        expected_sig = hmac.new(secret_key.encode(), serialized.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected_sig):
+            raise ValueError("Invalid signature - data may have been tampered with")
+            
+        # Deserialize with safe JSON loads
+        return json.loads(serialized)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON format in payload")
+
+# Helper function for creating signed data (to be used when creating the serialized data)
+def sign_data(data, secret_key):
+    """
+    Serialize data to JSON and add a digital signature.
+    
+    Args:
+        data: The data to be serialized and signed
+        secret_key: Secret key used for generating signatures
+    
+    Returns:
+        Base64-encoded string containing signature and serialized data
+    """
+    serialized = json.dumps(data)
+    signature = hmac.new(secret_key.encode(), serialized.encode(), hashlib.sha256).hexdigest()
+    combined = f"{signature}:{serialized}"
+    return base64.urlsafe_b64encode(combined.encode('utf-8'))
+
             )
             return res.stdout.splitlines()
         except subprocess.TimeoutExpired:
