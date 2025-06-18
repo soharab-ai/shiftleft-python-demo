@@ -55,8 +55,43 @@ def grep_processes():
 
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
-    pickled = request.form.get('pickled')
-    data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
-    deserialized = pickle.loads(data)
-    return jsonify({"success": True, "description": str(deserialized)})
+# Define a schema for expected JSON data
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "metadata": {
+            "type": "object",
+            "properties": {
+                "version": {"type": "string"},
+                "timestamp": {"type": "number"}
+            }
+        }
+    },
+    "required": ["description"]
+}
+
+@bp.route("/deserialized_descr", methods=["POST"])
+def deserialized_descr():
+    # Changed parameter name from 'pickled' to 'data' to reflect its new purpose
+    serialized_data = request.form.get('data')
+    if not serialized_data:
+        return jsonify({"success": False, "error": "No data provided"})
+    
+    try:
+        # Use JSON instead of pickle for secure deserialization
+        data = base64.urlsafe_b64decode(serialized_data).decode('utf-8')
+        deserialized = json.loads(data)
+        
+        # Added schema validation to further enhance security
+        jsonschema.validate(instance=deserialized, schema=JSON_SCHEMA)
+        
+        return jsonify({"success": True, "description": str(deserialized)})
+    except base64.binascii.Error:
+        return jsonify({"success": False, "error": "Invalid base64 encoding"})
+    except json.JSONDecodeError as e:
+        return jsonify({"success": False, "error": f"JSON decode error: {str(e)}"})
+    except jsonschema.exceptions.ValidationError as e:
+        return jsonify({"success": False, "error": f"Schema validation error: {str(e)}"})
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Error processing data: {str(e)}"})
