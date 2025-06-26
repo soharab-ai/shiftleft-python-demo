@@ -55,8 +55,44 @@ def grep_processes():
 
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
-    pickled = request.form.get('pickled')
-    data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
-    deserialized = pickle.loads(data)
-    return jsonify({"success": True, "description": str(deserialized)})
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+@bp.route("/deserialized_descr", methods=["POST"])
+@limiter.limit("10 per minute")  # Added rate limiting to prevent DoS attacks
+def deserialized_descr():
+    json_data = request.form.get('data')
+    signature = request.form.get('signature')
+    
+    # Added integrity check using HMAC to verify data hasn't been tampered with
+    if not signature or not hmac.compare_digest(
+        hmac.new(bp.config['SECRET_KEY'].encode(), json_data.encode(), hashlib.sha256).hexdigest(),
+        signature
+    ):
+        return jsonify({"error": "Data integrity check failed"}), 403
+        
+    try:
+        # Use JSON instead of pickle for safe deserialization
+        deserialized = json.loads(json_data)
+        
+        # Added schema validation to ensure the JSON conforms to expected structure
+        schema = {
+            "type": "object",
+            "properties": {
+                "id": {"type": "number"},
+                "name": {"type": "string"},
+                "description": {"type": "string"}
+            },
+            "required": ["id", "name"],
+            "additionalProperties": False  # Reject unexpected properties
+        }
+        
+        validate(instance=deserialized, schema=schema)
+        return jsonify({"success": True, "description": str(deserialized)})
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid data format"}), 400
+    except ValidationError as e:
+        return jsonify({"error": f"Schema validation failed: {str(e)}"}), 400
