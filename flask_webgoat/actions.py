@@ -39,21 +39,62 @@ def log_entry():
 
 @bp.route("/grep_processes")
 def grep_processes():
-    name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
-    out = res.stdout.decode("utf-8")
-    names = out.split("\n")
-    return jsonify({"success": True, "names": names})
+# Configure logging
+logger = logging.getLogger(__name__)
+handler = logging.FileHandler('application.log')
+handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["5 per minute", "50 per hour"]
+)
 
-@bp.route("/deserialized_descr", methods=["POST"])
+# Allowlist of processes that can be searched
+ALLOWED_PROCESS_PATTERNS = [
+    "python", "flask", "nginx", "apache", "mysql", "postgres"
+]
+
+def grep_processes():
+    # Apply rate limiting to this endpoint
+    @limiter.limit("5 per minute")
+    def rate_limited_function():
+        name = request.args.get("name")
+        client_ip = get_remote_address()
+        
+        # Log the search request (with sanitized input)
+        safe_name = re.sub(r'[^\w]', '', str(name)) if name else ''
+        logger.info(f"Process search request from {client_ip} for: {safe_name}")
+        
+        # Input validation: check if name is provided and in the allowlist
+        if not name:
+            return jsonify({"error": "Process name parameter is required"})
+            
+        # Check against allowlist instead of just regex validation
+        if not any(pattern in name for pattern in ALLOWED_PROCESS_PATTERNS):
+            logger.warning(f"Blocked search for non-allowed process: {safe_name} from {client_ip}")
+            return jsonify({"error": "Process name not in allowed list"})
+        
+        try:
+            # Using psutil library instead of subprocess for safer process listing
+            process_names = []
+            for proc in psutil.process_iter(['name', 'username']):
+                process_info = proc.info
+                # Filter by process name and optionally by user for least privilege
+                if name in process_info['name']:
+                    process_names.append(process_info['name'])
+                    
+            logger.info(f"Found {len(process_names)} matching processes")
+            return jsonify({"success": True, "names": process_names})
+            
+        except Exception as e:
+            logger.error(f"Error in process listing: {str(e)}")
+            return jsonify({"error": "Failed to retrieve process list", "details": str(e)})
+    
+    return rate_limited_function()
+
 def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
