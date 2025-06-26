@@ -39,21 +39,65 @@ def log_entry():
 
 @bp.route("/grep_processes")
 def grep_processes():
+# Dictionary of common processes that can be searched for - whitelist approach
+ALLOWED_PROCESS_NAMES = {
+    "chrome", "firefox", "safari", "edge", "python", "java", "nginx", 
+    "apache2", "mysql", "postgres", "mongod", "node", "bash", "zsh",
+    "systemd", "sshd", "httpd", "docker", "containerd", "cron"
+}
+
+# Rate limiting decorator
+def rate_limit(max_calls=5, period=60):
+    calls = null
+    
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            client_ip = request.remote_addr
+            current_time = time.time()
+            
+            # Clean up old entries
+            calls_list = calls.get(client_ip, [])
+            calls_list = [t for t in calls_list if current_time - t < period]
+            
+            if len(calls_list) >= max_calls:
+                logging.warning(f"Rate limit exceeded for {client_ip} when accessing process list")
+                return jsonify({"error": "Rate limit exceeded. Please try again later."}), 429
+                
+            calls_list.append(current_time)
+            calls[client_ip] = calls_list
+            
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@rate_limit(max_calls=5, period=60)
+def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
-    out = res.stdout.decode("utf-8")
-    names = out.split("\n")
-    return jsonify({"success": True, "names": names})
+    
+    # Log the request for security monitoring
+    logging.info(f"Process search requested for: {name}")
+    
+    # Whitelist validation instead of regex
+    if name is None or name.lower() not in ALLOWED_PROCESS_NAMES:
+        logging.warning(f"Invalid process name search attempted: {name}")
+        return jsonify({"error": "Invalid process name. Only allowed process names can be searched."})
+    
+    # Use psutil library instead of subprocess - eliminates shell command entirely
+    try:
+        # Implement privilege separation by only collecting necessary data
+        process_names = []
+        for proc in psutil.process_iter(['name']):
+            # More restrictive pattern matching with exact or word boundary checks
+            proc_name = proc.info['name']
+            if proc_name and name.lower() == proc_name.lower():
+                process_names.append(proc_name)
+        
+        return jsonify({"success": True, "names": process_names})
+    except Exception as e:
+        logging.error(f"Error during process listing: {str(e)}")
+        return jsonify({"error": "Failed to list processes"}), 500
 
-
-@bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
