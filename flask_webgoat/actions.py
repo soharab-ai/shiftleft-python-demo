@@ -10,6 +10,7 @@ bp = Blueprint("actions", __name__)
 
 @bp.route("/message", methods=["POST"])
 def log_entry():
+def log_entry():
     user_info = session.get("user_info", None)
     if user_info is None:
         return jsonify({"error": "no user_info found in session"})
@@ -23,21 +24,47 @@ def log_entry():
     if text_param is None:
         return jsonify({"error": "text parameter is required"})
 
+    # Added content length restriction to prevent DoS attacks
+    if len(text_param) > 10000:  # 10KB limit
+        return jsonify({"error": "content too large"})
+
     user_id = user_info[0]
     user_dir = "data/" + str(user_id)
-    user_dir_path = Path(user_dir)
-    if not user_dir_path.exists():
-        user_dir_path.mkdir()
+    
+    # Create user directory using file system abstraction
+    try:
+        # Using file system isolation with fs library
+        user_fs = OSFS(user_dir, create=True)
+    except Exception as e:
+        return jsonify({"error": f"Failed to access file system: {str(e)}"})
 
-    filename = filename_param + ".txt"
-    path = Path(user_dir + "/" + filename)
-    with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
-        open_file.write(text_param)
-    return jsonify({"success": True})
+    # Generate cryptographic filename instead of user input
+    hash_obj = hashlib.md5((filename_param + str(time.time())).encode())
+    safe_filename = hash_obj.hexdigest() + ".txt"
+    
+    try:
+        # Write file using filesystem abstraction
+        with user_fs.open(safe_filename, "w") as open_file:
+            open_file.write(text_param)
+        
+        # Get the real file path for MIME type checking
+        real_path = os.path.join(user_dir, safe_filename)
+        
+        # Validate file type using magic library
+        mime = magic.Magic(mime=True)
+        file_type = mime.from_file(real_path)
+        if not file_type.startswith('text/'):
+            # Remove file if invalid type
+            user_fs.remove(safe_filename)
+            return jsonify({"error": "invalid file type"})
+            
+        return jsonify({"success": True, "filename": safe_filename})
+    except Exception as e:
+        return jsonify({"error": f"Failed to write file: {str(e)}"})
+    finally:
+        # Close filesystem
+        user_fs.close()
 
-
-@bp.route("/grep_processes")
 def grep_processes():
 def grep_processes():
     name = request.args.get("name")
