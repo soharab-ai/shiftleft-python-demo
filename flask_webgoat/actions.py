@@ -39,21 +39,34 @@ def log_entry():
 
 @bp.route("/grep_processes")
 def grep_processes():
+def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
-    out = res.stdout.decode("utf-8")
-    names = out.split("\n")
-    return jsonify({"success": True, "names": names})
+    
+    # Fix 1: Implement allowlisting instead of blocklisting approach
+    ALLOWED_PROCESS_NAMES = ["apache2", "nginx", "mysql", "python", "firefox", "chrome", "systemd"]
+    if name not in ALLOWED_PROCESS_NAMES:
+        # Fix 4: Add security logging for potential abuse attempts
+        current_app.logger.warning(f"Unauthorized process lookup attempt: {shlex.quote(name)} by user: {session.get('user_id', 'unknown')}")
+        return jsonify({"error": "Unauthorized process name"})
+    
+    # Fix 2: Use shlex for proper command sanitization
+    sanitized_name = shlex.quote(name)
+    
+    # Fix 4: Log legitimate process lookup attempts
+    current_app.logger.info(f"Process lookup requested for: {sanitized_name} by user: {session.get('user_id', 'unknown')}")
+    
+    # Fix 5: Use psutil library instead of subprocess for safer process information retrieval
+    try:
+        process_names = []
+        for proc in psutil.process_iter(['name']):
+            if name in proc.info['name']:
+                process_names.append(proc.info['name'])
+                
+        return jsonify({"success": True, "names": process_names})
+    except Exception as e:
+        current_app.logger.error(f"Error in process lookup: {str(e)}")
+        return jsonify({"error": "Failed to retrieve process information"})
 
-
-@bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
