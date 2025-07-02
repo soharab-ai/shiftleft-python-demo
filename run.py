@@ -4,13 +4,69 @@ app = create_app()
 
 @app.after_request
 def add_csp_headers(response):
-    # Load CSP configuration from external file
-    config = configparser.ConfigParser()
-    try:
-        config.read('csp_config.ini')
-        trusted_origins = config['ORIGINS']['trusted_domains'].split(',')
-        report_uri = config['REPORTING']['report_uri']
-    except (KeyError, FileNotFoundError):
+# Configuration section - ideally in a separate config file
+def get_trusted_origins():
+    # Fix: Move trusted origins to configuration rather than hardcoding
+    return os.environ.get('TRUSTED_ORIGINS', 'https://trusted-site.com,https://other-trusted-site.com').split(',')
+
+# Initialize Flask-CORS with default restrictive settings
+def setup_cors(app):
+    # Fix: Use Flask-CORS extension instead of custom implementation
+    CORS(app, resources={
+        # Fix: Implement route-specific CORS policies
+        r"/api/*": {
+            "origins": get_trusted_origins(),
+            "supports_credentials": True,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
+        },
+        # More restrictive policy for sensitive routes
+        r"/admin/*": {
+            "origins": [os.environ.get('ADMIN_ORIGIN', 'https://admin.trusted-site.com')],
+            "supports_credentials": True
+        }
+    })
+
+# Enhanced security headers for all responses
+def add_csp_headers(response):
+    # Fix: Improve Content Security Policy
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'self'"
+    
+    # Fix: Add SameSite cookie protection
+    response.headers['Set-Cookie'] = response.headers.get('Set-Cookie', '') + '; SameSite=Strict; Secure; HttpOnly'
+    
+    # Fix: Add additional security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    
+    return response
+
+# Register this function with Flask
+def register_security_handlers(app):
+    # Set up CORS with Flask-CORS
+    setup_cors(app)
+    
+    # Apply security headers to all responses
+    @app.after_request
+    def process_response(response):
+        return add_csp_headers(response)
+    
+    # Fix: Add explicit handling for OPTIONS preflight requests
+    @app.before_request
+    def handle_preflight():
+        if request.method == 'OPTIONS':
+            # Create a response for preflight requests
+            response = Response()
+            return add_csp_headers(response)
+        
+        # Fix: Add additional request validation for cross-origin requests
+        if request.headers.get('Origin') and request.headers.get('Origin') not in get_trusted_origins():
+            # Log suspicious cross-origin request attempts
+            app.logger.warning(f"Suspicious cross-origin request from: {request.headers.get('Origin')}")
+    
+    return app
+
         # Fallback if config not available
         trusted_origins = ['https://trusted-domain.com']
         report_uri = '/csp-violation-report-endpoint/'
