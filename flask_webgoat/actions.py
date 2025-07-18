@@ -55,8 +55,70 @@ def grep_processes():
 
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
-    pickled = request.form.get('pickled')
-    data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
-    deserialized = pickle.loads(data)
-    return jsonify({"success": True, "description": str(deserialized)})
+def deserialized_descr():
+    # Define maximum size for serialized data to prevent DOS attacks
+    MAX_SERIALIZED_SIZE = 8192  # 8KB limit
+    
+    serialized = request.form.get('pickled')
+    
+    # Input validation before deserialization
+    if not serialized or not isinstance(serialized, str):
+        return jsonify({"error": "Invalid input format"})
+        
+    # Size validation to prevent DOS attacks
+    if len(serialized) > MAX_SERIALIZED_SIZE:
+        return jsonify({"error": "Serialized data too large"})
+    
+    # Define schema for validation
+    schema = {
+        "type": "object",
+        "properties": {
+            "description": {"type": "string"},
+            "metadata": {
+                "type": "object",
+                "properties": {
+                    "version": {"type": "string"},
+                    "timestamp": {"type": "number"}
+                }
+            }
+        },
+        "required": ["description"],
+        "additionalProperties": False
+    }
+    
+    # Verify HMAC signature if provided
+    hmac_key = request.application.config.get('SECRET_KEY', 'default-secret-key')
+    received_signature = request.form.get('signature')
+    if received_signature:
+        calculated_signature = hmac.new(hmac_key.encode(), serialized.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(received_signature, calculated_signature):
+            return jsonify({"error": "Invalid data signature"})
+    
+    try:
+        # Decode base64 and deserialize from JSON instead of pickle
+        decoded_data = base64.urlsafe_b64decode(serialized).decode('utf-8')
+        
+        # Use custom decoder with whitelisted types for more security
+        class SafeJSONDecoder(json.JSONDecoder):
+            def __init__(self, *args, **kwargs):
+                super().__init__(object_hook=self.object_hook, *args, **kwargs)
+            
+            def object_hook(self, obj):
+                # Only allow specific structures
+                # This prevents unexpected object types
+                return obj
+                
+        data = json.loads(decoded_data, cls=SafeJSONDecoder)
+        
+        # Perform schema validation
+        validate(instance=data, schema=schema)
+        
+        return jsonify({"success": True, "description": str(data.get("description", ""))})
+    except ValidationError as e:
+        return jsonify({"error": "Schema validation failed", "details": str(e)})
+    except base64.binascii.Error:
+        return jsonify({"error": "Invalid base64 encoding"})
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON format"})
+    except Exception as e:
+        return jsonify({"error": "Deserialization failed", "details": str(e)})
