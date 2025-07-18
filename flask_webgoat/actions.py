@@ -39,21 +39,32 @@ def log_entry():
 
 @bp.route("/grep_processes")
 def grep_processes():
+def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
+    
+    # Fix: Added input validation to prevent command injection
+    if name is None or not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        return jsonify({"error": "invalid input"})
+    
+    # Fix: Removed shell=True and using a list of arguments instead of string concatenation
+    # Fix: Execute ps aux directly and handle filtering in Python
     res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
+        ["ps", "aux"], 
+        shell=False,
         capture_output=True,
+        text=True
     )
+    
     if res.stdout is None:
         return jsonify({"error": "no stdout returned"})
-    out = res.stdout.decode("utf-8")
-    names = out.split("\n")
-    return jsonify({"success": True, "names": names})
+    
+    # Fix: Process filtering in Python instead of shell commands
+    lines = res.stdout.splitlines()
+    matching_lines = [line for line in lines if name in line]
+    process_names = [line.split()[10] if len(line.split()) > 10 else "" for line in matching_lines]
+    
+    return jsonify({"success": True, "names": process_names})
 
-
-@bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
     pickled = request.form.get('pickled')
     data = base64.urlsafe_b64decode(pickled)
