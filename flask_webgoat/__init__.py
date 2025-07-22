@@ -9,12 +9,20 @@ DB_FILENAME = "database.db"
 
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
+        # Removed sensitive data exposure vulnerability
+        # conn.set_trace_callback(print)  # This was exposing SQL queries to logs
+        
+        # If logging is needed for debugging, use a proper logger
+        # with appropriate log levels instead
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            # Log query without sensitive parameters
+            logging.debug("Executing database query (parameters redacted)")
+        
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
         return cur.fetchone() if one else cur.fetchall()
+
 
 
 def create_app():
