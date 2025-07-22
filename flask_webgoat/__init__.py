@@ -9,12 +9,44 @@ DB_FILENAME = "database.db"
 
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
+        # Fixed vulnerability: Implemented sanitized logging to prevent sensitive data exposure
+        if os.environ.get('FLASK_ENV') == 'development':
+            # Only enable logging in development environment
+            def sanitize_query(query_string):
+                # Define patterns for sensitive data
+                patterns = [
+                    (r'password\s*=\s*[\'"][^\'"]*[\'"]', 'password=*****'),
+                    (r'card_number\s*=\s*[\'"][^\'"]*[\'"]', 'card_number=*****'),
+                    (r'cvv\s*=\s*[\'"][^\'"]*[\'"]', 'cvv=*****'),
+                    (r'ssn\s*=\s*[\'"][^\'"]*[\'"]', 'ssn=*****'),
+                    (r'[0-9]{3}-[0-9]{2}-[0-9]{4}', '*****'),  # SSN pattern
+                    (r'[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{4}', '*****-*****-*****-*****'),  # Credit card pattern
+                ]
+                
+                # Apply sanitization
+                sanitized = query_string
+                for pattern, replacement in patterns:
+                    sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+                
+                return sanitized
+
+            def safe_trace_callback(query):
+                logging.debug(sanitize_query(query))
+                
+            # Configure proper logging
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                filename='app_debug.log'
+            )
+            
+            conn.set_trace_callback(safe_trace_callback)
+            
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
         return cur.fetchone() if one else cur.fetchall()
+
 
 
 def create_app():
