@@ -9,12 +9,19 @@ DB_FILENAME = "database.db"
 
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
+        # Removed sensitive data exposure vulnerability
+        # Only log in development environment with sanitized queries
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            # Sanitize the query before logging to avoid exposing sensitive data
+            sanitized_query = re.sub(r'(password|token|secret|credential|key)\s*=\s*[^\s,)]*', r'\1=********', query)
+            logging.debug("Executing query: %s", sanitized_query)
+            # Don't log arguments as they may contain sensitive data
+            
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
         return cur.fetchone() if one else cur.fetchall()
+
 
 
 def create_app():
