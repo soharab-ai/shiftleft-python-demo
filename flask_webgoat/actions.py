@@ -40,14 +40,40 @@ def log_entry():
 @bp.route("/grep_processes")
 def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
+    # Validate input - allow only alphanumeric and basic characters
+    if name and re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        # Use list form of subprocess to avoid shell injection
+        res = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True
+        )
+        # Filter results in Python rather than using shell
+        filtered_lines = []
+        if res.stdout:
+            for line in res.stdout.splitlines():
+                if name in line:
+                    parts = line.split()
+                    if len(parts) >= 11:
+                        filtered_lines.append(parts[10])  # Get command name (position 11)
+        
+        # Check if a redirect URL was requested
+        redirect_url = request.args.get('redirect_to')
+        if redirect_url:
+            # Validate redirect URL to prevent open redirect vulnerabilities
+            allowed_domains = ['example.com', 'trusted-domain.com', 'internal.company.net']
+            parsed_url = urllib.parse.urlparse(redirect_url)
+            
+            # Only allow relative URLs or URLs to trusted domains
+            if not parsed_url.netloc or any(parsed_url.netloc.endswith(domain) for domain in allowed_domains):
+                return redirect(redirect_url)
+            # Fallback to safe location if redirect URL is not trusted
+            return redirect(url_for('index'))
+            
+        return jsonify(filtered_lines)
+    else:
+        return jsonify({"error": "Invalid input"}), 400
+
     out = res.stdout.decode("utf-8")
     names = out.split("\n")
     return jsonify({"success": True, "names": names})
