@@ -39,10 +39,21 @@ def login_and_redirect():
             400,
         )
 
-    query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
-    result = query_db(query, (username, password), True)
-    if result is None:
-        # vulnerability: Open Redirect
-        return redirect(url)
-    session["user_info"] = (result[0], result[1], result[2])
-    return jsonify({"success": True})
+query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
+result = query_db(query, (username, password), True)
+if result is None:
+    # Fix for Open Redirect vulnerability - Validate URL before redirecting
+    # Option 1: Always redirect to a safe default page
+    return redirect(url_for('login', next=url))
+    
+    # Option 2: If you must allow external URLs, validate them thoroughly
+    # allowed_domains = ['trusted-domain.com', 'another-trusted.org']
+    # if url and (url.startswith('/') or 
+    #            (validators.url(url) and 
+    #             urlparse(url).netloc in allowed_domains)):
+    #     return redirect(url)
+    # else:
+    #     return redirect(url_for('login'))
+session["user_info"] = (result[0], result[1], result[2])
+return jsonify({"success": True})
+
