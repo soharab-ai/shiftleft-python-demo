@@ -55,8 +55,36 @@ def grep_processes():
 
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
-    pickled = request.form.get('pickled')
-    data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
-    deserialized = pickle.loads(data)
-    return jsonify({"success": True, "description": str(deserialized)})
+    # Validate content type
+    if not request.is_json and not request.form:
+        return jsonify({"success": False, "error": "Invalid content type"}), 415
+    
+    # Get data with size limitation (limit to 10KB)
+    if request.is_json:
+        if request.content_length and request.content_length > 10 * 1024:
+            return jsonify({"success": False, "error": "Payload too large"}), 413
+        data_string = request.get_json(silent=True)
+    else:
+        data_string = request.form.get('data')
+        if data_string and len(data_string) > 10 * 1024:
+            return jsonify({"success": False, "error": "Payload too large"}), 413
+    
+    if not data_string:
+        return jsonify({"success": False, "error": "Missing data"}), 400
+        
+    # Using JSON for safe deserialization
+    try:
+        deserialized = json.loads(data_string) if isinstance(data_string, str) else data_string
+        
+        # Basic schema validation
+        if not isinstance(deserialized, dict):
+            return jsonify({"success": False, "error": "Invalid data structure"}), 400
+            
+        # Sanitize output before returning
+        safe_description = str(deserialized).replace("<", "&lt;").replace(">", "&gt;")
+        return jsonify({"success": True, "description": safe_description})
+    except json.JSONDecodeError:
+        return jsonify({"success": False, "error": "Invalid data format"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": "Processing error"}), 500
+
