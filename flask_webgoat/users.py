@@ -44,4 +44,11 @@ def create_user():
         query_db(query, [], False, True)
         return jsonify({"success": True})
     except sqlite3.Error as err:
-        return jsonify({"error": "could not create user:" + err})
+        request_id = str(uuid.uuid4())
+        app.logger.error("Database error occurred", 
+                        extra={"error_details": str(err),
+                               "request_id": request_id,
+                               "endpoint": request.path})
+        return jsonify({"error": "An error occurred while processing your request", 
+                        "request_id": request_id}), 500
+
