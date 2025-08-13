@@ -53,13 +53,36 @@ def grep_processes():
         # Whitelist of allowed domains or validate relative URLs
         allowed_domains = ['trusted-domain.com', 'example.com']
         parsed = urlparse(url)
-        # Allow relative URLs or URLs with domains in whitelist
-        return not parsed.netloc or parsed.netloc in allowed_domains
-    
-    # Validate redirect URL or default to home
-    if not is_safe_redirect_url(redirect_url):
-        redirect_url = "/"
-    
+@bp.route("/deserialized_descr", methods=["POST"])
+def deserialized_descr():
+    MAX_PAYLOAD_SIZE = 10240  # Limit payload to 10KB
+    pickled = request.form.get('pickled')
+    try:
+        data = base64.urlsafe_b64decode(pickled)
+        
+        # Prevent DoS attacks with large payloads
+        if len(data) > MAX_PAYLOAD_SIZE:
+            return jsonify({"success": False, "error": "Payload too large"}), 413
+        
+        # Validate that the content is actually JSON before processing
+        json_data = data.decode('utf-8')
+        # Using JSON instead of pickle for safe deserialization
+        deserialized = json.loads(json_data)
+        
+        # Implement basic schema validation
+        if not isinstance(deserialized, dict):
+            return jsonify({"success": False, "error": "Invalid data structure"}), 400
+        
+        # Log successful deserialization
+        current_app.logger.info("Successful data deserialization")
+        return jsonify({"success": True, "description": str(deserialized)})
+    except json.JSONDecodeError:
+        current_app.logger.warning("Invalid JSON format in deserialization attempt")
+        return jsonify({"success": False, "error": "Invalid JSON format"}), 400
+    except Exception as e:
+        current_app.logger.warning(f"Deserialization attempt failed: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Invalid data format"}), 400
+
     # Execute commands safely without shell=True
     ps_process = subprocess.run(
         ["ps", "aux"],
