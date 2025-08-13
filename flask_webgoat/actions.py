@@ -26,15 +26,24 @@ def log_entry():
     user_id = user_info[0]
     user_dir = "data/" + str(user_id)
     user_dir_path = Path(user_dir)
-    if not user_dir_path.exists():
-        user_dir_path.mkdir()
+if not user_dir_path.exists():
+    user_dir_path.mkdir()
 
-    filename = filename_param + ".txt"
-    path = Path(user_dir + "/" + filename)
-    with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
-        open_file.write(text_param)
-    return jsonify({"success": True})
+# Sanitize the filename to prevent path traversal
+safe_filename = sanitize_filename(filename_param) + ".txt"
+
+# Create the path securely using path joining
+path = user_dir_path / safe_filename
+
+# Validate that the resolved path is within the user directory to prevent directory traversal
+if not os.path.normpath(os.path.realpath(str(path))).startswith(os.path.normpath(os.path.realpath(str(user_dir_path)))):
+    return jsonify({"error": "Invalid file path"}), 400
+
+# Open the file securely
+with path.open("w", encoding="utf-8") as open_file:
+    open_file.write(text_param)
+return jsonify({"success": True})
+
 
 
 @bp.route("/grep_processes")
