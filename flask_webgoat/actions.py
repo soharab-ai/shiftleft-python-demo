@@ -37,17 +37,56 @@ path = user_dir_path / safe_filename
 
 # Validate that the resolved path is within the user directory to prevent directory traversal
 if not os.path.normpath(os.path.realpath(str(path))).startswith(os.path.normpath(os.path.realpath(str(user_dir_path)))):
-    return jsonify({"error": "Invalid file path"}), 400
-
-# Open the file securely
-with path.open("w", encoding="utf-8") as open_file:
-    open_file.write(text_param)
-return jsonify({"success": True})
-
-
-
 @bp.route("/grep_processes")
 def grep_processes():
+    name = request.args.get("name")
+    redirect_url = request.args.get("redirect_url", "/")
+    
+    # Input validation - only allow alphanumeric characters and common symbols
+    import re
+    if name is None or not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        return jsonify({"error": "Invalid input"})
+    
+    # URL redirect validation - only allow safe URLs
+    from urllib.parse import urlparse
+    def is_safe_redirect_url(url):
+        # Whitelist of allowed domains or validate relative URLs
+        allowed_domains = ['trusted-domain.com', 'example.com']
+        parsed = urlparse(url)
+        # Allow relative URLs or URLs with domains in whitelist
+        return not parsed.netloc or parsed.netloc in allowed_domains
+    
+    # Validate redirect URL or default to home
+    if not is_safe_redirect_url(redirect_url):
+        redirect_url = "/"
+    
+    # Execute commands safely without shell=True
+    ps_process = subprocess.run(
+        ["ps", "aux"],
+        capture_output=True,
+        text=True
+    )
+    
+    grep_process = subprocess.run(
+        ["grep", name],
+        input=ps_process.stdout,
+        capture_output=True,
+        text=True
+    )
+    
+    awk_process = subprocess.run(
+        ["awk", "{print $11}"],
+        input=grep_process.stdout,
+        capture_output=True,
+        text=True
+    )
+    
+    if not awk_process.stdout:
+        return jsonify({"error": "no stdout returned"})
+    
+    # Return result with safe redirect URL
+    return jsonify({"result": awk_process.stdout.strip(), "redirect_url": redirect_url})
+
     name = request.args.get("name")
     
     # Validate input
