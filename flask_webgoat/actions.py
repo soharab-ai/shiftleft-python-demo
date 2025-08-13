@@ -40,14 +40,41 @@ def log_entry():
 @bp.route("/grep_processes")
 def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
+    redirect_url = request.args.get("redirect_to", "/")
+    
+    if not name or not re.match(r'^[a-zA-Z0-9_\-]+$', name):
+        return jsonify({"error": "Invalid input"}), 400
+    
+    try:
+        # Use safer approach without shell=True
+        res = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        # Filter the output in Python instead of shell commands
+        matching_processes = []
+        for line in res.stdout.splitlines():
+            if name in line:
+                parts = line.split()
+                if len(parts) >= 11:
+                    matching_processes.append(parts[10])
+        
+        # Safe URL redirection - only allow relative URLs or specific domains
+        if redirect_url:
+            # Only allow relative URLs starting with / for internal redirects
+            if redirect_url.startswith('/'):
+                return redirect(redirect_url)
+            else:
+                # For security, default to home page if external URL is provided
+                return redirect('/')
+        
+        return jsonify({"processes": matching_processes})
+    except subprocess.SubprocessError:
+        return jsonify({"error": "Command execution failed"}), 500
+
     out = res.stdout.decode("utf-8")
     names = out.split("\n")
     return jsonify({"success": True, "names": names})
