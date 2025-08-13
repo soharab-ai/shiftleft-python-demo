@@ -37,17 +37,37 @@ def log_entry():
     return jsonify({"success": True})
 
 
-@bp.route("/grep_processes")
-def grep_processes():
-    name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
+@bp.route("/redirect")
+def redirect_page():
+    """
+    Securely handle URL redirections by implementing a whitelist approach
+    and validation for relative URLs.
+    """
+    destination = request.args.get("url", "")
+    
+    # Option 1: Use a whitelist of allowed destinations
+    allowed_destinations = {
+        "home": "/home",
+        "profile": "/profile",
+        "settings": "/settings",
+        "dashboard": "/dashboard"
+    }
+    
+    # If the destination is in our whitelist, redirect to the safe path
+    if destination in allowed_destinations:
+        return redirect(allowed_destinations[destination])
+    
+    # Option 2: Only allow relative URLs within our application
+    if destination.startswith('/') and not destination.startswith('//'):
+        # Additional validation to ensure it's a valid path in our application
+        if re.match(r'^/[a-zA-Z0-9_/\-]+$', destination):
+            # Add logging for audit purposes
+            return redirect(destination)
+    
+    # If the URL was not in whitelist or a valid relative URL,
+    # redirect to default page for safety
+    return redirect("/default_page")
+
     out = res.stdout.decode("utf-8")
     names = out.split("\n")
     return jsonify({"success": True, "names": names})
