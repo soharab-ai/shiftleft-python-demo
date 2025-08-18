@@ -40,14 +40,45 @@ def log_entry():
 @bp.route("/grep_processes")
 def grep_processes():
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
+    next_url = request.args.get("next", "/")
+    
+    # Input validation - only allow alphanumeric characters and some safe symbols
+    import re
+    if not name or not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+        return jsonify({"error": "invalid process name"})
+    
+    # Validate redirect URL to prevent open redirection
+    if next_url:
+        from urllib.parse import urlparse
+        parsed_url = urlparse(next_url)
+        # Only allow relative URLs or URLs to trusted domains
+        if parsed_url.netloc and parsed_url.netloc not in {"trusted-domain.com", "localhost:5000"}:
+            next_url = "/"
+    
+    try:
+        # Using separate processes with pipes rather than shell commands
+        ps_process = subprocess.Popen(["ps", "aux"], stdout=subprocess.PIPE)
+        grep_process = subprocess.Popen(["grep", name], stdin=ps_process.stdout, stdout=subprocess.PIPE)
+        ps_process.stdout.close()
+        awk_process = subprocess.Popen(["awk", "{print $11}"], stdin=grep_process.stdout, stdout=subprocess.PIPE)
+        grep_process.stdout.close()
+        
+        output = awk_process.communicate()[0]
+        
+        if not output:
+            return jsonify({"error": "no stdout returned"})
+            
+        result = {"output": output.decode('utf-8')}
+        
+        # If this is meant to be a redirect after processing
+        if "redirect" in request.args:
+            from flask import redirect
+            return redirect(next_url)
+            
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
     out = res.stdout.decode("utf-8")
     names = out.split("\n")
     return jsonify({"success": True, "names": names})
