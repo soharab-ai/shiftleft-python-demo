@@ -39,10 +39,42 @@ def login_and_redirect():
             400,
         )
 
+    from urllib.parse import urlparse, unquote
+
+    def is_safe_url(url):
+        # Check if the URL belongs to trusted domains
+        allowed_domains = {'example.com', 'subdomain.example.com'}
+        try:
+            # Normalize URL to prevent encoding bypass
+            url = unquote(url)
+            parsed = urlparse(url)
+            
+            # Enforce protocol security
+            if parsed.scheme and parsed.scheme not in ['http', 'https']:
+                return False
+                
+            # Extract domain without port for comparison
+            domain = parsed.netloc.split(':')[0] if parsed.netloc else ''
+            
+            # Check if domain exactly matches or is a subdomain of allowed domains
+            is_allowed = any(domain == d or domain.endswith('.' + d) for d in allowed_domains)
+            
+            # Allow relative URLs (no netloc and no scheme)
+            is_relative = not parsed.netloc and not parsed.scheme
+            
+            return is_allowed or is_relative
+        except:
+            return False
+
     query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
     result = query_db(query, (username, password), True)
     if result is None:
-        # vulnerability: Open Redirect
-        return redirect(url)
+        # Validate URL before redirect
+        if url and is_safe_url(url):
+            return redirect(url)
+        else:
+            # Default to a safe location if URL is invalid
+            return redirect('/login')
     session["user_info"] = (result[0], result[1], result[2])
     return jsonify({"success": True})
+
