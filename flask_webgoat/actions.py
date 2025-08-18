@@ -29,12 +29,36 @@ def log_entry():
     if not user_dir_path.exists():
         user_dir_path.mkdir()
 
-    filename = filename_param + ".txt"
-    path = Path(user_dir + "/" + filename)
-    with path.open("w", encoding="utf-8") as open_file:
-        # vulnerability: Directory Traversal
+    # Sanitize filename by removing path components and restricting characters
+    import os
+    import re
+    import uuid
+    from pathlib import Path
+
+    # Remove potentially dangerous characters and limit to safe characters
+    base_name = os.path.basename(filename_param)
+    name, ext = os.path.splitext(base_name)
+    safe_name = re.sub(r'[^\w.-]', '_', name)
+    
+    # Only allow specific extensions or default to .txt
+    allowed_extensions = ['.txt', '.md', '.log']
+    if ext.lower() not in allowed_extensions:
+        ext = '.txt'
+    
+    safe_filename = f"{safe_name}{ext}"
+    
+    # Use pathlib for safer path handling
+    user_dir_path = Path(user_dir).resolve()
+    file_path = (user_dir_path / safe_filename).resolve()
+    
+    # Ensure the final path is within the user directory
+    if user_dir_path not in file_path.parents and file_path != user_dir_path:
+        return jsonify({"error": "Invalid path detected"}), 400
+        
+    with file_path.open("w", encoding="utf-8") as open_file:
         open_file.write(text_param)
     return jsonify({"success": True})
+
 
 
 @bp.route("/grep_processes")
