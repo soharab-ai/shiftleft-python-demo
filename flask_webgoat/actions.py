@@ -53,10 +53,46 @@ def grep_processes():
     return jsonify({"success": True, "names": names})
 
 
+# Define a schema for validating the deserialized data
+class DataSchema(Schema):
+    # Define expected fields here
+    description = fields.String(required=True)
+    # Add other expected fields as needed
+
+# Define constants
+MAX_SIZE = 10 * 1024  # 10KB limit
+SECRET_KEY = "your-secret-key"  # Store securely in environment variables or config
+
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
-    pickled = request.form.get('pickled')
-    data = base64.urlsafe_b64decode(pickled)
-    # vulnerability: Insecure Deserialization
-    deserialized = pickle.loads(data)
-    return jsonify({"success": True, "description": str(deserialized)})
+    # Get the serialized data
+    serialized = request.form.get('pickled')  # Keeping parameter name for backward compatibility
+    
+    # Check if data exists and is within size limits
+    if not serialized or len(serialized) > MAX_SIZE:
+        return jsonify({"success": False, "error": "Data exceeds size limit or is empty"}), 400
+    
+    # Choose which approach to use (JSON or JWT)
+    use_jwt = request.args.get('use_jwt', 'false').lower() == 'true'
+    
+    try:
+        if use_jwt:
+            # JWT approach: Verify and decode the token
+            deserialized = jwt.decode(serialized, SECRET_KEY, algorithms=["HS256"])
+        else:
+            # JSON approach: Decode base64 and parse as JSON
+            decoded_data = base64.urlsafe_b64decode(serialized).decode('utf-8')
+            raw_data = json.loads(decoded_data)
+            
+            # Validate against schema
+            schema = DataSchema()
+            deserialized = schema.load(raw_data)
+        
+        return jsonify({"success": True, "description": str(deserialized)})
+    except ValidationError as e:
+        return jsonify({"success": False, "error": "Schema validation failed", "details": e.messages}), 400
+    except jwt.InvalidTokenError as e:
+        return jsonify({"success": False, "error": "Invalid JWT token"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Invalid data format: {str(e)}"}), 400
+
