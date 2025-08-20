@@ -39,10 +39,61 @@ def login_and_redirect():
             400,
         )
 
+    # Define whitelist of allowed domains
+    ALLOWED_DOMAINS = ['example.com', 'api.example.com']
+    
+    # Define a dictionary of allowed redirect endpoints
+    ALLOWED_REDIRECTS = {
+        'home': '/home',
+        'profile': '/profile',
+        'settings': '/settings',
+        'default': '/login'
+    }
+    
+    # Valid paths for relative URLs
+    VALID_PATHS = ['/home', '/profile', '/settings', '/login', '/dashboard']
+    
+    def is_safe_url(url):
+        # Check if URL is None or empty
+        if url is None or not url:
+            return False
+        
+        # Normalize URL before validation to prevent encoding bypass attacks
+        url = unquote(url)
+        
+        # Parse URL using werkzeug's more secure URL parsing
+        parsed_url = url_parse(url)
+        
+        # Check URL scheme - only allow http and https
+        safe_schemes = ['http', 'https', '']
+        if parsed_url.scheme and parsed_url.scheme not in safe_schemes:
+            return False
+            
+        # For absolute URLs, validate domain
+        if parsed_url.netloc:
+            return is_domain_allowed(parsed_url.netloc)
+        else:
+            # For relative URLs, prevent path traversal and restrict to known paths
+            if '..' in url or url.startswith('//'):
+                return False
+            # Ensure the relative URL starts with one of our valid paths
+            return any(url.startswith(path) for path in VALID_PATHS)
+    
+    def is_domain_allowed(domain):
+        # More precise domain matching
+        return domain in ALLOWED_DOMAINS or any(domain.endswith('.' + d) for d in ALLOWED_DOMAINS)
+    
     query = "SELECT id, username, access_level FROM user WHERE username = ? AND password = ?"
     result = query_db(query, (username, password), True)
     if result is None:
-        # vulnerability: Open Redirect
-        return redirect(url)
+        # Fixed vulnerability: Open Redirect - Implement comprehensive URL validation
+        if url and is_safe_url(url):
+            return redirect(url)
+        else:
+            # Use mapping approach as additional security
+            redirect_key = request.args.get('redirect', 'default')
+            safe_url = ALLOWED_REDIRECTS.get(redirect_key, '/login')
+            return redirect(safe_url)
     session["user_info"] = (result[0], result[1], result[2])
     return jsonify({"success": True})
+
