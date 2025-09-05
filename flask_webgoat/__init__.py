@@ -9,12 +9,64 @@ DB_FILENAME = "database.db"
 
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
+        # Fixed vulnerability: Sensitive Data Exposure using dedicated security logging
+        # Only enable logging in development environment with proper sanitization
+        if os.environ.get("ENVIRONMENT") == "development":
+            # Load sanitization rules from configuration
+            config_path = current_app.config.get('LOG_SANITIZATION_CONFIG', 'log_sanitization_rules.yaml')
+            
+            try:
+                with open(config_path) as f:
+                    sanitization_rules = yaml.safe_load(f)
+            except (FileNotFoundError, yaml.YAMLError):
+                # Fallback to default rules if config file unavailable
+                sanitization_rules = {
+                    'patterns': [
+                        {'regex': r'password\s*=\s*[\'"][^\'"]*[\'"]', 'replacement': 'password=\'********\''},
+                        {'regex': r'credit_card\s*=\s*[\'"][^\'"]*[\'"]', 'replacement': 'credit_card=\'********\''},
+                        {'regex': r'ssn\s*=\s*[\'"][^\'"]*[\'"]', 'replacement': 'ssn=\'********\''},
+                        {'regex': r'api_key\s*=\s*[\'"][^\'"]*[\'"]', 'replacement': 'api_key=\'********\''},
+                    ]
+                }
+            
+            # Set up structured logging with explicit field marking and sanitization
+            structlog.configure(
+                processors=[
+                    structlog.processors.add_log_level,
+                    structlog.processors.TimeStamper(fmt="iso"),
+                    JSONRenderer(),
+                ],
+                logger_factory=structlog.stdlib.LoggerFactory(),
+            )
+            
+            structured_logger = structlog.get_logger()
+            
+            def secure_logger(query):
+                # Implement sanitization directly without using invalid library
+                sanitized_query = query
+                for pattern in sanitization_rules['patterns']:
+                    sanitized_query = re.sub(
+                        pattern['regex'],
+                        pattern['replacement'],
+                        sanitized_query
+                    )
+                
+                # Use structured logging with explicit sensitive field marking
+                structured_logger.debug(
+                    "database_query",
+                    sanitized_query=sanitized_query,
+                    query_type="sql",
+                    sensitive_data_handled=True
+                )
+            
+            # Only add trace callback in development with proper sanitization
+            conn.set_trace_callback(secure_logger)
+            
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
         return cur.fetchone() if one else cur.fetchall()
+
 
 
 def create_app():
