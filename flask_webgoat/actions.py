@@ -38,21 +38,98 @@ def log_entry():
     # Validate text content for malicious patterns
     if re.search(r'<script|javascript:|eval\(|document\.cookie', text_param, re.IGNORECASE):
         logging.warning(f"Potentially malicious content detected from user ID: {user_info[0]}")
-        return jsonify({"error": "potentially malicious content detected"})
+# Setup secure logging
+logger = logging.getLogger(__name__)
+handler = logging.FileHandler('security.log')
+handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
+# Rate limiting decorator
+def rate_limit(max_calls, time_frame):
+    calls = null
     
-    user_id = user_info[0]
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            ip = request.remote_addr
+            
+            if ip not in calls:
+                calls[ip] = []
+            
+            # Remove old calls outside the time frame
+            calls[ip] = [t for t in calls[ip] if t > now - time_frame]
+            
+            if len(calls[ip]) >= max_calls:
+                logger.warning(f"Rate limit exceeded for IP: {ip}")
+                return jsonify({"error": "Too many requests. Please try again later."}), 429
+            
+            calls[ip].append(now)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+# Input validation function for process names
+def validate_process_name(name):
+    """
+    Validates a process name to ensure it only contains safe characters.
     
-    # Generate UUID instead of using user-provided filename
-    unique_filename = str(uuid.uuid4())
+    Args:
+        name (str): The process name to validate
+        
+    Returns:
+        bool: True if the name is valid, False otherwise
+    """
+    if not name:
+        return False
     
-    # Create content hash for content-addressed storage
-    content_hash = hashlib.md5(text_param.encode()).hexdigest()
-    safe_filename = f"{unique_filename}_{content_hash}"
+    # Use bleach to sanitize input - only allow alphanumeric + limited symbols
+    sanitized = bleach.clean(name, strip=True)
+    valid_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
     
-    # Properly construct directory path using Path's joining capabilities
-    user_dir_path = Path("data") / str(user_id)
-    if not user_dir_path.exists():
-        user_dir_path.mkdir(parents=True, exist_ok=True)
+    return sanitized == name and all(char in valid_chars for char in name)
+
+@rate_limit(max_calls=10, time_frame=60)  # 10 calls per minute
+def grep_processes():
+    # Check user permissions (simplified example - in real app, would use proper auth framework)
+    if 'user_role' not in session or session['user_role'] != 'admin':
+        logger.warning(f"Unauthorized access attempt from IP: {request.remote_addr}")
+        return jsonify({"error": "Access denied"}), 403
+        
+    name = request.args.get("name")
+    
+    # Log the request (sanitized)
+    safe_name = bleach.clean(str(name), strip=True) if name else ""
+    logger.info(f"Process search requested for: {safe_name}")
+    
+    # Validate input using dedicated validation function
+    if not validate_process_name(name):
+        logger.warning(f"Invalid process name format attempted: {safe_name}")
+        return jsonify({"error": "Invalid request parameters"}), 400
+    
+    try:
+        # Using psutil library instead of subprocess for process management
+        process_names = []
+        for proc in psutil.process_iter(['name', 'cmdline']):
+            try:
+                proc_info = proc.info
+                proc_name = proc_info['name']
+                if name in proc_name:
+                    process_names.append(proc_name)
+                # Also check command line for the process name
+                elif proc_info['cmdline'] and any(name in cmd for cmd in proc_info['cmdline']):
+                    process_names.append(proc_name)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        
+        return jsonify({"success": True, "names": process_names})
+    
+    except Exception as e:
+        # Generic error message to user, detailed logging for debugging
+        logger.error(f"Error in grep_processes: {str(e)}")
+        return jsonify({"error": "An error occurred while processing your request"}), 500
+
 
     # Use .txt extension to enforce file type whitelist
     filename = safe_filename + ".txt"
