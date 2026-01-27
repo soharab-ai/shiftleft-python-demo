@@ -38,20 +38,71 @@ def log_entry():
 
 
 @bp.route("/grep_processes")
-def grep_processes():
-    name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
-    out = res.stdout.decode("utf-8")
-    names = out.split("\n")
-    return jsonify({"success": True, "names": names})
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Role-based access control decorator
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('is_admin', False):
+            logger.warning(f"Unauthorized access attempt to admin function from IP: {request.remote_addr}")
+            return jsonify({"error": "Administrator privileges required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+def grep_processes():
+    # Implement role-based access control
+    @admin_required
+    def protected_grep_processes():
+        name = request.args.get("name")
+        page = int(request.args.get("page", 1))
+        limit = min(int(request.args.get("limit", 10)), 50)  # Limit results to prevent DoS
+        
+        # Input validation added to prevent command injection
+        if not name:
+            logger.warning(f"Missing name parameter from IP: {request.remote_addr}")
+            return jsonify({"error": "name parameter is required"})
+        
+        # Using a whitelist approach instead of regex
+        allowed_process_names = ["python", "java", "nginx", "apache2", "mysql", "postgres"]
+        if name not in allowed_process_names:
+            logger.warning(f"Invalid process name requested: {name} from IP: {request.remote_addr}")
+            return jsonify({"error": "process name not allowed"})
+        
+        try:
+            # Using psutil instead of subprocess for better security
+            process_list = []
+            for proc in psutil.process_iter(['name', 'cmdline']):
+                try:
+                    proc_info = proc.info
+                    proc_name = proc_info.get('name', '')
+                    if name in proc_name:
+                        process_list.append(proc_name)
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            
+            # Implement pagination
+            total_results = len(process_list)
+            start_idx = (page - 1) * limit
+            end_idx = start_idx + limit
+            paginated_results = process_list[start_idx:end_idx]
+            
+            logger.info(f"Process search completed for: {name}, found {total_results} results")
+            return jsonify({
+                "success": True, 
+                "names": paginated_results,
+                "page": page,
+                "limit": limit,
+                "total": total_results
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in grep_processes: {str(e)}")
+            return jsonify({"error": "An error occurred while fetching processes"}), 500
+    
+    return protected_grep_processes()
 
 @bp.route("/deserialized_descr", methods=["POST"])
 def deserialized_descr():
