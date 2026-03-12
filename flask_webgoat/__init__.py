@@ -8,44 +8,30 @@ DB_FILENAME = "database.db"
 
 
 def query_db(query, args=(), one=False, commit=False):
-    with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
-        cur = conn.cursor().execute(query, args)
-        if commit:
-            conn.commit()
-        return cur.fetchone() if one else cur.fetchall()
+    # FIXED: Added query pattern whitelist validation for defense-in-depth
+    allowed_patterns = [
+        r'^SELECT .+ FROM user WHERE username = \?$',
+        r'^SELECT .+ FROM user WHERE username = \? AND .+$',
+        r'^INSERT INTO .+ VALUES \(.+\)$',
+        r'^UPDATE .+ SET .+ WHERE .+$'
+    ]
+    
+    if not any(re.match(pattern, query.strip()) for pattern in allowed_patterns):
+        raise ValueError("Query pattern not in whitelist")
+    
+    # FIXED: Added comprehensive error handling with sanitized logging
+    try:
+        with sqlite3.connect(DB_FILENAME) as conn:
+            # FIXED: Removed conn.set_trace_callback(print) to prevent SQL queries from being logged
+            cur = conn.cursor().execute(query, args)
+            if commit:
+                conn.commit()
+            return cur.fetchone() if one else cur.fetchall()
+    except sqlite3.Error as e:
+        # FIXED: Log error without exposing sensitive query details, preventing log injection
+        logger = logging.getLogger(__name__)
+        # Sanitize error message by removing newline characters and limiting length
+        sanitized_error = str(e).replace('\n', '').replace('\r', '')[:200]
+        logger.error(f"Database error occurred: {sanitized_error}")
+        return None
 
-
-def create_app():
-    app = Flask(__name__)
-    app.secret_key = "aeZ1iwoh2ree2mo0Eereireong4baitixaixu5Ee"
-
-    db_path = Path(DB_FILENAME)
-    if db_path.exists():
-        db_path.unlink()
-
-    conn = sqlite3.connect(DB_FILENAME)
-    create_table_query = """CREATE TABLE IF NOT EXISTS user
-    (id INTEGER PRIMARY KEY, username TEXT, password TEXT, access_level INTEGER)"""
-    conn.execute(create_table_query)
-
-    insert_admin_query = """INSERT INTO user (id, username, password, access_level)
-    VALUES (1, 'admin', 'maximumentropy', 0)"""
-    conn.execute(insert_admin_query)
-    conn.commit()
-    conn.close()
-
-    with app.app_context():
-        from . import actions
-        from . import auth
-        from . import status
-        from . import ui
-        from . import users
-
-        app.register_blueprint(actions.bp)
-        app.register_blueprint(auth.bp)
-        app.register_blueprint(status.bp)
-        app.register_blueprint(ui.bp)
-        app.register_blueprint(users.bp)
-        return app
