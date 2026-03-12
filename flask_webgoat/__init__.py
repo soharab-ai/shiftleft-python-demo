@@ -3,31 +3,41 @@ import sqlite3
 from pathlib import Path
 
 from flask import Flask, g
+import logging
+import hashlib
+import time
 
 DB_FILENAME = "database.db"
 
-
+# SECURITY FIX: Configure logging with production-safe defaults
+log_level = logging.WARNING if os.getenv('FLASK_ENV') == 'production' else logging.INFO
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 def query_db(query, args=(), one=False, commit=False):
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
+        # SECURITY FIX: Explicitly disable trace callbacks to prevent sensitive data exposure
+        conn.set_trace_callback(None)
+        
+        # SECURITY FIX: Log only execution metadata, never query content or parameters
+        query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
+        start_time = time.time()
+        
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
+        
+        # SECURITY FIX: Log metadata only for operational insights without exposing sensitive data
+        execution_time = time.time() - start_time
+        logger.info("Query executed", extra={
+            'query_fingerprint': query_hash,
+            'execution_time_ms': round(execution_time * 1000, 2),
+            'rows_affected': cur.rowcount,
+            'committed': commit
+        })
+        
         return cur.fetchone() if one else cur.fetchall()
 
-
-def create_app():
-    app = Flask(__name__)
-    app.secret_key = "aeZ1iwoh2ree2mo0Eereireong4baitixaixu5Ee"
-
-    db_path = Path(DB_FILENAME)
-    if db_path.exists():
-        db_path.unlink()
-
-    conn = sqlite3.connect(DB_FILENAME)
-    create_table_query = """CREATE TABLE IF NOT EXISTS user
-    (id INTEGER PRIMARY KEY, username TEXT, password TEXT, access_level INTEGER)"""
     conn.execute(create_table_query)
 
     insert_admin_query = """INSERT INTO user (id, username, password, access_level)
@@ -49,3 +59,4 @@ def create_app():
         app.register_blueprint(ui.bp)
         app.register_blueprint(users.bp)
         return app
+
