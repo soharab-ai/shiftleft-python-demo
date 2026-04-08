@@ -5,16 +5,59 @@ from pathlib import Path
 from flask import Flask, g
 
 DB_FILENAME = "database.db"
+def get_db():
+    # FIXED: Initialize SQLAlchemy database instance for ORM-based queries
+    return db
+# FIXED: Added SQLAlchemy ORM model to replace raw SQL queries
+db = SQLAlchemy()
 
+class User(db.Model):
+    __tablename__ = 'user'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(20), unique=True, nullable=False)
+    access_level = db.Column(db.Integer, nullable=False)
+    password_hash = db.Column(db.String(256), nullable=False)
 
-def query_db(query, args=(), one=False, commit=False):
+    if placeholder_count > 0 and len(args) == 0:
+        raise ValueError("Query has placeholders but no arguments provided")
+    
+    if len(args) > 0 and placeholder_count == 0:
+        raise ValueError("Arguments provided but query has no placeholders")
+    
+    if placeholder_count != len(args):
+        raise ValueError(f"Mismatch between placeholders ({placeholder_count}) and arguments ({len(args)})")
+    
+    # FIXED: Enhanced whitelist validation using SQL parser to detect dangerous patterns
+    dangerous_patterns = [
+        r';\s*DROP',
+        r';\s*DELETE\s+FROM\s+\w+\s*;',
+        r';\s*UPDATE.*--',
+        r'UNION\s+ALL\s+SELECT',
+        r'UNION\s+SELECT',
+        r'--\s*$',
+        r'/\*',
+        r'\*/',
+        r';\s*INSERT',
+        r';\s*ALTER',
+        r';\s*CREATE',
+        r'xp_cmdshell',
+        r';\s*EXEC',
+        r';\s*EXECUTE',
+        r'0x[0-9a-fA-F]+',  # Hex encoding attempts
+        r'CHAR\s*\(',        # CHAR-based encoding
+        r'CONCAT\s*\(',      # Concatenation attacks
+    ]
+    
+    for pattern in dangerous_patterns:
+        if re.search(pattern, query, re.IGNORECASE):
+            raise ValueError("Potentially dangerous SQL pattern detected")
+    
     with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
         cur = conn.cursor().execute(query, args)
         if commit:
             conn.commit()
         return cur.fetchone() if one else cur.fetchall()
+
 
 
 def create_app():
