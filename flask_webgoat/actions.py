@@ -38,16 +38,35 @@ def log_entry():
 
 
 @bp.route("/grep_processes")
+@limiter.limit("10 per minute") # Added rate limiting to prevent abuse
 def grep_processes():
+    # Added logging to track potential abuse attempts
+    logger.info(f"Process query requested from IP: {get_remote_address()}")
+    
     name = request.args.get("name")
-    # vulnerability: Remote Code Execution
-    res = subprocess.run(
-        ["ps aux | grep " + name + " | awk '{print $11}'"],
-        shell=True,
-        capture_output=True,
-    )
-    if res.stdout is None:
-        return jsonify({"error": "no stdout returned"})
+    
+    # Implemented whitelist-based approach for allowed process names
+    allowed_process_names = ["apache2", "nginx", "mysql", "postgres", "python", "node", "java"]
+    
+    if not name or name not in allowed_process_names:
+        logger.warning(f"Unauthorized process query attempt: {name}")
+        return jsonify({"error": "unauthorized process query"})
+    
+    # Using psutil library instead of subprocess for secure process information retrieval
+    result = []
+    try:
+        for proc in psutil.process_iter(['name']):
+            try:
+                if name in proc.info['name']:
+                    result.append(proc.info['name'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+    except Exception as e:
+        logger.error(f"Error querying processes: {str(e)}")
+        return jsonify({"error": "failed to get process list"})
+               
+    return jsonify({"processes": result})
+
     out = res.stdout.decode("utf-8")
     names = out.split("\n")
     return jsonify({"success": True, "names": names})
