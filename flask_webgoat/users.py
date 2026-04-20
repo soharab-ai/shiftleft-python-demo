@@ -16,10 +16,13 @@ def create_user():
     access_level = user_info[2]
     if access_level != 0:
         return jsonify({"error": "access level of 0 is required for this action"})
+    
     username = request.form.get("username")
     password = request.form.get("password")
-    access_level = request.form.get("access_level")
-    if username is None or password is None or access_level is None:
+    access_level_str = request.form.get("access_level")
+    
+    # Added input validation for required fields
+    if username is None or password is None or access_level_str is None:
         return (
             jsonify(
                 {
@@ -28,20 +31,45 @@ def create_user():
             ),
             400,
         )
+    
+    # Added input length restriction to prevent DoS attacks
+    if len(username) > 50:
+        return jsonify({"error": "Username exceeds maximum allowed length (50 characters)"}), 400
+    
+    # Added input validation for username using regex (alphanumeric + some special chars)
+    if not re.match(r'^[a-zA-Z0-9_-.@]+$', username):
+        return jsonify({"error": "Username contains invalid characters"}), 400
+    
     if len(password) < 3:
         return (
             jsonify({"error": "the password needs to be at least 3 characters long"}),
             402,
         )
-
-    # vulnerability: SQL Injection
-    query = (
-        "INSERT INTO user (username, password, access_level) VALUES ('%s', '%s', %d)"
-        % (username, password, int(access_level))
-    )
-
+    
     try:
-        query_db(query, [], False, True)
+        # Convert and validate access_level
+        try:
+            access_level_int = int(access_level_str)
+            if access_level_int not in [0, 1, 2]:  # Assuming only these values are valid
+                return jsonify({"error": "Invalid access level value"}), 400
+        except ValueError:
+            return jsonify({"error": "Access level must be a number"}), 400
+            
+        # Hash the password with bcrypt before storage
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Using SQLAlchemy ORM instead of raw SQL queries
+        new_user = User(
+            username=username, 
+            password=hashed_password.decode('utf-8'),  # Store hash as string
+            access_level=access_level_int
+        )
+        db.session.add(new_user)
+        db.session.commit()
+        
         return jsonify({"success": True})
-    except sqlite3.Error as err:
-        return jsonify({"error": "could not create user:" + err})
+    except Exception:
+        # Improved error handling to prevent exposing database details
+        db.session.rollback()
+        return jsonify({"error": "Database error occurred while creating user"}), 500
+

@@ -7,15 +7,31 @@ from flask import Flask, g
 DB_FILENAME = "database.db"
 
 
-def query_db(query, args=(), one=False, commit=False):
-    with sqlite3.connect(DB_FILENAME) as conn:
-        # vulnerability: Sensitive Data Exposure
-        conn.set_trace_callback(print)
-        cur = conn.cursor().execute(query, args)
-        if commit:
-            conn.commit()
-        return cur.fetchone() if one else cur.fetchall()
+# Create SQLAlchemy engine with connection pooling
+engine = create_engine(f'sqlite:///{DB_FILENAME}', poolclass=QueuePool, pool_size=5, max_overflow=10)
+Session = scoped_session(sessionmaker(bind=engine))
 
+def query_db(query, args=(), one=False, commit=False):
+    """
+    Execute a raw SQL query using SQLAlchemy's connection pooling
+    This function is kept for backward compatibility
+    """
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(query, args)
+            if commit:
+                conn.execution_options(isolation_level="AUTOCOMMIT")
+            
+            if one:
+                return result.fetchone()
+            else:
+                return result.fetchall()
+    except Exception as e:
+        # Avoid exposing sensitive error information
+        if commit:
+            # If this was a write operation, log the error safely (without exposing data)
+            print(f"Database error occurred: {type(e).__name__}")
+        raise
 
 def create_app():
     app = Flask(__name__)
